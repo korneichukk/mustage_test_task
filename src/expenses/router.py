@@ -1,5 +1,5 @@
 from decimal import Decimal
-from typing import List, Optional
+from typing import List
 from fastapi import APIRouter, HTTPException, status
 
 from src.database import AsyncSessionLocal
@@ -9,7 +9,7 @@ from src.expenses.crud import (
     get_all_expenses,
     update_expense,
 )
-from src.expenses.pydantic_models import Expense
+from src.expenses.pydantic_models import Expense, ExpenseUpdate
 
 router = APIRouter(prefix="/expenses")
 
@@ -31,20 +31,19 @@ async def get_expenses():
 
 
 @router.put("", response_model=Expense, status_code=status.HTTP_200_OK)
-async def change_expense(
-    expense_id: str, amount_in_uah: Decimal, description: Optional[str]
-):
+async def change_expense(expense_update: ExpenseUpdate):
     async with AsyncSessionLocal() as session:
         result = await update_expense(
             session,
-            expense_id=expense_id,
-            amount_in_uah=amount_in_uah,
-            amount_in_usd=amount_in_uah / Decimal(41.3),
-            description=description,
+            expense_id=expense_update.id,
+            amount_in_uah=expense_update.amount_in_uah,
+            amount_in_usd=expense_update.amount_in_uah / Decimal(41.3),
+            description=expense_update.description,
         )
         if not result:
             return HTTPException(
-                status_code=404, detail=f"Expense with id [{expense_id}] was not found."
+                status_code=404,
+                detail=f"Expense with id [{expense_update.id}] was not found.",
             )
 
         return result
