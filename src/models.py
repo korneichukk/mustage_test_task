@@ -13,7 +13,9 @@ class Base(DeclarativeBase):
 class Expense(Base):
     __tablename__ = "expenses"
 
-    id: Mapped[str] = mapped_column(String, primary_key=True, default=uuid4)
+    id: Mapped[str] = mapped_column(
+        String(255), primary_key=True, default=lambda: str(uuid4())
+    )
 
     amount_in_uah: Mapped[Decimal] = mapped_column(Numeric(10, 2))
     amount_in_usd: Mapped[Decimal] = mapped_column(Numeric(10, 2))
