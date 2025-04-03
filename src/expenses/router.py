@@ -9,16 +9,30 @@ from src.expenses.crud import (
     get_all_expenses,
     update_expense,
 )
+from src.expenses.currency_parser import get_usd_to_uah
 from src.expenses.pydantic_models import Expense, ExpenseUpdate
+from src.log import get_logger
+
+logger = get_logger(__name__)
 
 router = APIRouter(prefix="/expenses")
 
 
 @router.post("", response_model=Expense, status_code=status.HTTP_201_CREATED)
 async def add_expense(amount_in_uah: Decimal, description: str):
+    usd_to_uah_result = get_usd_to_uah()
+    if error := usd_to_uah_result["error"]:
+        logger.warning(error)
+        usd_to_uah_rate = 42
+    else:
+        usd_to_uah_rate = usd_to_uah_result["result"]
+
     async with AsyncSessionLocal() as session:
         new_expense = await create_expense(
-            session, amount_in_uah, amount_in_uah / Decimal(41.3), description
+            session,
+            amount_in_uah,
+            amount_in_uah / Decimal(usd_to_uah_rate),
+            description,
         )
         return new_expense
 
