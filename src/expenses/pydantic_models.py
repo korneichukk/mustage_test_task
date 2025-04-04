@@ -8,16 +8,20 @@ class ExpenseBase(BaseModel):
     telegram_user_id: str
     amount_in_uah: Decimal
     description: Optional[str] = None
-    expense_date: date
 
 
 class ExpenseUpdate(ExpenseBase):
     id: str
 
 
+class ExpenseCreate(ExpenseBase):
+    expense_date: date
+
+
 class Expense(ExpenseBase):
     id: str
     amount_in_usd: Decimal
+    expense_date: date
 
     class Config:
         from_attributes = True

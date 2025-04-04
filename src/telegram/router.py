@@ -6,8 +6,6 @@ from aiogram.fsm.state import StatesGroup, State
 
 from datetime import datetime
 import aiohttp
-import openpyxl
-from io import BytesIO
 
 from src.config import get_settings
 from src.telegram.keyboards import actions
@@ -32,6 +30,12 @@ class DateRange(StatesGroup):
 
 class DeleteExpense(StatesGroup):
     expense_id = State()
+
+
+class UpdateExpense(StatesGroup):
+    expense_id = State()
+    title = State()
+    amount = State()
 
 
 @router.message(CommandStart())
@@ -293,7 +297,148 @@ async def delete_expense_by_id(message: Message, state: FSMContext):
 
     await state.clear()
 
-    # Provide feedback to the user and show them the options to continue
+    await message.answer(
+        "Operation complete. Choose an action:",
+        reply_markup=actions,
+    )
+
+
+@router.callback_query(F.data == "edit_expense")
+async def update_expense(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+    await callback.message.answer("Fetching your expenses...")  # type: ignore
+
+    telegram_user_id = str(callback.from_user.id)  # type: ignore
+    async with aiohttp.ClientSession() as session:
+        try:
+            async with session.get(
+                f"http://localhost:8000/expenses?expense_telegram_user_id={telegram_user_id}"
+            ) as response:
+                if response.status == 200:
+                    expenses = await response.json()
+                    if expenses:
+                        save_path = (
+                            settings.PROJECT_ROOT / "expenses_data" / telegram_user_id
+                        )
+                        save_path.mkdir(parents=True, exist_ok=True)
+
+                        file_path = create_excel(expenses, save_path, None, None)
+                        input_file = FSInputFile(file_path)
+                        await callback.message.answer_document(  # type: ignore
+                            document=input_file,
+                            caption="Here is generated report of your expenses.",
+                        )
+                    else:
+                        await callback.message.answer("You don't have any expenses.")
+                else:
+                    await callback.message.answer(
+                        f"Failed to fetch your expenses. Error: {response.status}"
+                    )
+        except Exception as e:
+            await callback.message.answer(
+                f"An error occurred while fetching your expenses: {str(e)}"
+            )
+
+    await state.set_state(UpdateExpense.expense_id)
+    await callback.message.answer("Enter the expense ID of the expense you want to update.")  # type: ignore
+
+
+@router.message(UpdateExpense.expense_id)
+async def update_expense_by_id(message: Message, state: FSMContext):
+    expense_id = message.text.strip()
+
+    if not expense_id:
+        await message.answer("Please provide a valid expense ID.")
+        return
+
+    telegram_user_id = str(message.from_user.id)  # type: ignore
+    async with aiohttp.ClientSession() as session:
+        try:
+            async with session.get(
+                f"http://localhost:8000/expenses?expense_telegram_user_id={telegram_user_id}"
+            ) as response:
+                if response.status == 200:
+                    expenses = await response.json()
+                    expense = next(
+                        (exp for exp in expenses if exp["id"] == expense_id), None
+                    )
+                    if expense:
+                        await state.update_data(expense_id=expense_id)
+
+                        expense_details = (
+                            f"Expense ID: {expense['id']}\n"
+                            f"Title: {expense['description']}\n"
+                            f"Amount: {expense['amount_in_uah']} UAH\n"
+                            f"Amount in USD: {expense['amount_in_usd']} USD\n"
+                            f"Date: {expense['expense_date']}"
+                        )
+                        await message.answer(
+                            f"Current expense details:\n{expense_details}\n"
+                        )
+
+                        await message.answer(f"Enter new title for the expense (Current: {expense['description']}):")  # type: ignore
+                        await state.set_state(UpdateExpense.title)
+                    else:
+                        await message.answer(f"No expense found with ID {expense_id}.")
+                else:
+                    await message.answer(
+                        f"Failed to fetch your expenses. Error: {response.status}"
+                    )
+        except Exception as e:
+            await message.answer(
+                f"An error occurred while fetching your expenses: {str(e)}"
+            )
+
+
+@router.message(UpdateExpense.title)
+async def update_expense_title(message: Message, state: FSMContext):
+    new_title = message.text.strip()
+
+    if not new_title:
+        await message.answer("Please provide a valid title.")
+        return
+
+    await state.update_data(title=new_title)
+
+    await state.set_state(UpdateExpense.amount)
+    await message.answer(f"Enter new amount:")  # type: ignore
+
+
+@router.message(UpdateExpense.amount)
+async def update_expense_amount(message: Message, state: FSMContext):
+    new_amount = message.text.strip()
+
+    if not validate_amount(new_amount):
+        await message.answer("Invalid amount! Please enter a valid decimal number.")
+        return
+
+    await state.update_data(amount=new_amount)
+    data = await state.get_data()
+
+    payload = {
+        "telegram_user_id": str(message.from_user.id),  # type: ignore
+        "amount_in_uah": data["amount"],
+        "description": data["title"],
+        "id": data["expense_id"],
+    }
+
+    async with aiohttp.ClientSession() as session:
+        try:
+            async with session.put(
+                "http://localhost:8000/expense", json=payload
+            ) as response:
+                if response.status == 200:
+                    await message.answer(
+                        f"Expense with ID {data['expense_id']} has been successfully updated."
+                    )
+                else:
+                    await message.answer(
+                        f"Failed to update expense. Error: {response.status}"
+                    )
+        except Exception as e:
+            await message.answer(f"An error occurred while updating the expense: {e}")
+
+    await state.clear()
     await message.answer(
         "Operation complete. Choose an action:",
         reply_markup=actions,
