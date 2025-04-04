@@ -10,6 +10,8 @@ class Settings(BaseSettings):
 
     SQLITE_DB_NAME: str = "db.sqlite3"
 
+    BOT_TOKEN: str = ""
+
     @computed_field
     @property
     def ASYNC_SQLITE_ALCHEMY_URI(self) -> str:
