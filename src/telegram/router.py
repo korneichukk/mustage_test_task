@@ -1,5 +1,5 @@
 from aiogram import F, Router, html
-from aiogram.types import CallbackQuery, FSInputFile, Message, BufferedInputFile
+from aiogram.types import CallbackQuery, FSInputFile, Message
 from aiogram.filters import CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import StatesGroup, State
@@ -28,6 +28,10 @@ class AddExpense(StatesGroup):
 class DateRange(StatesGroup):
     start_date = State()
     end_date = State()
+
+
+class DeleteExpense(StatesGroup):
+    expense_id = State()
 
 
 @router.message(CommandStart())
@@ -213,6 +217,83 @@ async def get_expenses_data(message: Message, state: FSMContext):
 
     await state.clear()
 
+    await message.answer(
+        "Operation complete. Choose an action:",
+        reply_markup=actions,
+    )
+
+
+@router.callback_query(F.data == "delete_expense")
+async def delete_expense(callback: CallbackQuery, state: FSMContext):
+    await state.set_state(DeleteExpense.expense_id)
+
+    await callback.answer()
+    await callback.message.answer("Fetching your expenses...")  # type: ignore
+
+    telegram_user_id = str(callback.from_user.id)  # type: ignore
+    async with aiohttp.ClientSession() as session:
+        try:
+            async with session.get(
+                f"http://localhost:8000/expenses?expense_telegram_user_id={telegram_user_id}"
+            ) as response:
+                if response.status == 200:
+                    expenses = await response.json()
+                    if expenses:
+                        save_path = (
+                            settings.PROJECT_ROOT / "expenses_data" / telegram_user_id
+                        )
+                        save_path.mkdir(parents=True, exist_ok=True)
+
+                        file_path = create_excel(expenses, save_path, None, None)
+                        input_file = FSInputFile(file_path)
+                        await callback.message.answer_document(  # type: ignore
+                            document=input_file,
+                            caption="Here is generated report.",
+                        )
+                    else:
+                        await callback.message.answer("You don't have any expenses.")
+                else:
+                    await callback.message.answer(
+                        f"Failed to fetch your expenses. Error: {response.status}"
+                    )
+        except Exception as e:
+            await callback.message.answer(
+                f"An error occurred while fetching your expenses: {str(e)}"
+            )
+
+    await state.set_state(DeleteExpense.expense_id)
+    await callback.message.answer("Enter exense_id you want to delete.")  # type: ignore
+
+
+@router.message(DeleteExpense.expense_id)
+async def delete_expense_by_id(message: Message, state: FSMContext):
+    expense_id = message.text.strip()
+
+    if not expense_id:
+        await message.answer("Please provide a valid expense ID.")
+        return
+
+    async with aiohttp.ClientSession() as session:
+        try:
+            async with session.delete(
+                f"http://localhost:8000/expense/{expense_id}"
+            ) as response:
+                if response.status == 200:
+                    await message.answer(
+                        f"Expense with ID {expense_id} has been successfully deleted."
+                    )
+                else:
+                    await message.answer(
+                        f"Failed to delete expense. Error: {response.status}"
+                    )
+        except Exception as e:
+            await message.answer(
+                f"An error occurred while deleting the expense: {str(e)}"
+            )
+
+    await state.clear()
+
+    # Provide feedback to the user and show them the options to continue
     await message.answer(
         "Operation complete. Choose an action:",
         reply_markup=actions,

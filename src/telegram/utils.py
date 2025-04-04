@@ -1,10 +1,15 @@
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, Optional
 from openpyxl import Workbook
 from openpyxl.utils import get_column_letter
 
 
-def create_excel(data: List[Dict], save_path: Path, date_start: str, date_end: str):
+def create_excel(
+    data: List[Dict],
+    save_path: Path,
+    date_start: Optional[str],
+    date_end: Optional[str],
+):
     wb = Workbook()
     ws = wb.active
 
@@ -24,6 +29,6 @@ def create_excel(data: List[Dict], save_path: Path, date_start: str, date_end: s
         adjusted_width = max_length + 2
         ws.column_dimensions[column].width = adjusted_width
 
-    file_path = save_path / f"expenses_{date_start}-{date_end}.xlsx"
+    file_path = save_path / f"expenses_{date_start or "All time"}-{date_end}.xlsx"
     wb.save(file_path)
     return file_path
