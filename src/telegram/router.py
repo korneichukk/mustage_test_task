@@ -1,14 +1,17 @@
 from aiogram import F, Router, html
-from aiogram.types import CallbackQuery, Message
+from aiogram.types import CallbackQuery, FSInputFile, Message, BufferedInputFile
 from aiogram.filters import CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import StatesGroup, State
 
 from datetime import datetime
 import aiohttp
+import openpyxl
+from io import BytesIO
 
 from src.config import get_settings
 from src.telegram.keyboards import actions
+from src.telegram.utils import create_excel
 from src.telegram.validators import validate_amount, validate_date
 
 
@@ -20,6 +23,11 @@ class AddExpense(StatesGroup):
     title = State()
     date = State()
     amount = State()
+
+
+class DateRange(StatesGroup):
+    start_date = State()
+    end_date = State()
 
 
 @router.message(CommandStart())
@@ -99,6 +107,108 @@ async def new_expense_amount(message: Message, state: FSMContext):
         except Exception as e:
             await message.answer(
                 f"An error occurred while sending the expense data: {str(e)}"
+            )
+
+    await state.clear()
+
+    await message.answer(
+        "Operation complete. Choose an action:",
+        reply_markup=actions,
+    )
+
+
+@router.callback_query(F.data == "report")
+async def get_expenses(callback: CallbackQuery, state: FSMContext):
+    await state.set_state(DateRange.start_date)
+
+    await callback.answer()
+    await callback.message.answer("Enter start date of the period (format: [dd.mm.yyyy]).")  # type: ignore
+
+
+@router.message(DateRange.start_date)
+async def get_expenses_end_date(message: Message, state: FSMContext):
+    start_date = message.text or ""
+    if not validate_date(start_date):
+        await message.answer(
+            "Invalid date format! Please, try again, using format [dd.mm.yyyy] or check the date correctness."
+        )
+        return
+
+    try:
+        start_date_obj = datetime.strptime(start_date, "%d.%m.%Y")
+        formatted_start_date = start_date_obj.strftime("%Y-%m-%d")
+    except ValueError:
+        await message.answer(
+            "Invalid date format! Please, use the format [dd.mm.yyyy]."
+        )
+        return
+
+    await state.update_data(start_date=formatted_start_date)
+    await state.set_state(DateRange.end_date)
+
+    await message.answer("Enter end date of the period (format: [dd.mm.yyyy]).")  # type: ignore
+
+
+@router.message(DateRange.end_date)
+async def get_expenses_data(message: Message, state: FSMContext):
+    end_date = message.text or ""
+    if not validate_date(end_date):
+        await message.answer(
+            "Invalid date format! Please, try again, using format [dd.mm.yyyy] or check the date correctness."
+        )
+        return
+
+    try:
+        end_date_obj = datetime.strptime(end_date, "%d.%m.%Y")
+        formatted_end_date = end_date_obj.strftime("%Y-%m-%d")
+    except ValueError:
+        await message.answer(
+            "Invalid date format! Please, use the format [dd.mm.yyyy]."
+        )
+        return
+
+    data = await state.get_data()
+    start_date = data.get("start_date", "")
+    telegram_user_id = str(message.from_user.id)  # type: ignore
+
+    params = {
+        "expense_telegram_user_id": telegram_user_id,
+        "start_date": start_date,
+        "end_date": formatted_end_date,
+    }
+
+    async with aiohttp.ClientSession() as session:
+        try:
+            async with session.get(
+                "http://localhost:8000/expenses", params=params
+            ) as response:
+                if response.status == 200:
+                    expenses = await response.json()
+                    if expenses:
+                        save_path = (
+                            settings.PROJECT_ROOT / "expenses_data" / telegram_user_id
+                        )
+                        save_path.mkdir(parents=True, exist_ok=True)
+
+                        file_path = create_excel(
+                            expenses, save_path, start_date, end_date
+                        )
+                        input_file = FSInputFile(file_path)
+                        await message.answer_document(
+                            document=input_file,
+                            caption="Here is generated report.",
+                        )
+                    else:
+                        await message.answer(
+                            f"No expenses found for the specified date range."
+                        )
+                else:
+                    await message.answer(
+                        f"Failed to retrieve expenses. Error: {response.status}"
+                    )
+        except Exception as e:
+            await message.answer(
+                f"An error occurred while processing the request: {str(e)}"
             )
 
     await state.clear()
